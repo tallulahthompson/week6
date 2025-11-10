@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<head>
+<link href="https://fonts.googleapis.com/css?family=Open+Sans" rel="stylesheet">
+<style>
+body {
+  background: LavenderBlush;
+  font-family: 'Open Sans', sans-serif;
+  margin: 0;
+  padding: 20px;
+  overflow-x: hidden;
+}
+button {
+  font-family: 'Open Sans', sans-serif;
+  font-size: 18px;
+  padding: 15px 30px;
+  margin: 5px;
+  border: none;
+  border-radius: 25px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: #facae7;
+}
+button:hover { transform: scale(1.05); }
+input[type="number"] {
+  font-family: 'Open Sans', sans-serif;
+  font-size: 16px;
+  padding: 8px;
+  margin: 5px;
+  border: 2px solid #facae7;
+  border-radius: 15px;
+  width: 80px;
+}
+label { 
+  margin: 5px 10px; 
+  color: #8b4789;
+  font-size: 16px;
+}
+
+.falling-note {
+  position: fixed;
+  font-size: 48px;
+  pointer-events: none;
+  animation: fall linear forwards;
+  z-index: 1000;
+}
+
+@keyframes fall {
+  to {
+    transform: translateY(100vh) rotate(720deg);
+    opacity: 0;
+  }
+}
+</style>
+</head>
+<body>
+<script src="https://cdn.jsdelivr.net/gh/netizenorg/netnet-standard-library/build/nn.min.js"></script>
+<script src="https://unpkg.com/tone"></script>
+<script src="https://algorithmicmusic.online/js/viz-helpers.js"></script>
+<script>
+/* global nn, Tone, viz */
+
+function frequencyToNoteName(freq) {
+  const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+  const semitonesFromA4 = 12 * Math.log2(freq / 440)
+  const noteIndex = (Math.round(semitonesFromA4) + 9 + 120) % 12
+  return noteNames[noteIndex]
+}
+
+function dropNote(frequency) {
+  const noteName = frequencyToNoteName(frequency)
+  const note = document.createElement('div')
+  note.className = 'falling-note'
+  note.textContent = noteName
+  const startX = Math.random() * (window.innerWidth - 50)
+  note.style.left = startX + 'px'
+  note.style.top = '-50px'
+  const duration = 2 + Math.random() * 1.5
+  note.style.animationDuration = duration + 's'
+  const colors = ['#ff69b4', '#ff1493', '#da70d6', '#ba55d3', '#9370db']
+  note.style.color = colors[Math.floor(Math.random() * colors.length)]
+  document.body.appendChild(note)
+  setTimeout(() => {
+    note.remove()
+  }, duration * 1000)
+}
+  
+// SOUND SOURCES + AUDIO GRAPH
+// ---------------------------
+// (your instruments and signal chain)
+const wave = viz.createWaveform()
+const folder = 'https://tonejs.github.io/audio/drum-samples/CR78/'
+const drumset = new Tone.Players({
+  kick: folder + 'kick.mp3',
+  snare: folder + 'snare.mp3',
+  hihat: folder + 'hihat.mp3'
+}).toDestination()
+drumset.connect(wave)
+
+const synth = new Tone.PolySynth().toDestination()
+synth.connect(wave)
+
+const celloCNotes = ['C2', 'C#2', 'D2', 'D#2', 'E2', 'F2', 'F#2', 'G2', 'G#2', 'A2', 'A#2', 'B2'].map(note => Tone.Frequency(note).toFrequency())
+
+let root = nn.random(celloCNotes)
+function calcNote(rootFreq, num) {
+  const ratio = Math.pow(3/2, num)
+  return rootFreq * ratio
+}
+let scale = [0, 1, 2, 3, 4, 5, 6, 7].map(i => calcNote(root, i))
+
+function updateRoot() {
+  root = nn.random(celloCNotes)
+  scale = [0, 1, 2, 3, 4, 5, 6, 7].map(i => calcNote(root, i))
+}
+
+function geometricWait (p) {
+  let k = 1
+  while (Math.random() > p) k++
+  return k
+}
+const geomProb = 0.35
+let beatsLeft = geometricWait(geomProb)
+
+let currentArpNotes = [root, root * 1.25, root * 1.5, root * 2]
+
+function playChord(frequencies, duration, time) {
+  frequencies.forEach(freq => {
+    synth.triggerAttackRelease(freq, duration, time)
+  })
+}
+  
+// SETTING UP TONE TRANSPORT
+// --------------------------
+Tone.Transport.loop = true // loop the transport
+Tone.Transport.bpm.value = 80 // set your tempo/speed
+Tone.Transport.timeSignature = 4 // beats per measure/bar
+Tone.Transport.loopEnd = '2m' // how many measures/bars
+
+// FUNCTIONS
+// ----------
+function toggle () {
+  if (Tone.Transport.state === 'stopped') {
+    Tone.Transport.start()
+    this.content('stop')
+  } else {
+    Tone.Transport.stop()
+    this.content('start')
+  }
+}
+
+function updateBPM () {
+  Tone.Transport.bpm.value = this.value
+}
+
+function play (time) {
+  // we can check the current beat with: Tone.Transport.position
+  // and we can convert position to an array of numbers like this
+  const pos = Tone.Transport.position.split(':').map(Number)
+  const bar = pos[0]
+  const beat = pos[1]
+  // update the label (for refernce)
+  beatLabel.content(`measure: ${bar}, beat: ${beat}`)
+  
+  // DECIDE WHAT/WHEN TO PLAY HERE
+  // ...
+  
+  if (beat === 0) {
+    updateRoot()
+    currentArpNotes = [root, root * 1.25, root * 1.5, root * 2]
+  }
+  
+  if (beat >= 0 && beat <= 3) {
+    synth.triggerAttackRelease(currentArpNotes[beat], '8n', time)
+    dropNote(currentArpNotes[beat])
+  }
+}
+
+new Tone.Loop(play).start()
+
+// USER INTERFACE
+// ----------------
+nn.create('button')
+  .content('start')
+  .addTo('body')
+  .on('click', toggle)
+
+nn.create('input')
+  .set('type', 'number')
+  .set('value', Tone.Transport.bpm.value)
+  .addTo('body')
+  .on('change', updateBPM)
+
+nn.create('br').addTo('body')
+
+const beatLabel = nn.create('label')
+  .content('measure, beat')
+  .addTo('body')
+
+nn.create('br').addTo('body')
+
+
+
+
+// Reflection: I kept the same notes as last week, based on the cello with ratios of 3/2 between the notes. I used the geometric distribution to decide when the snare comes in, since it was my favourite probability distribution from maths, and the hihat has a 50% chance each beat while the snare comes in whenever the geometric counter is zero. I also added random harmonies from the cello like scale.
+</script>
+</body>
+</html>
